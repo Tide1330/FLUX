@@ -1,17 +1,43 @@
-import csv 
+from csv import writer
+import csv
 import numpy as np
 import pandas as pd
 import ollama as ollama
 import re
 import time
+from youtube_comment_downloader import YoutubeCommentDownloader, SORT_BY_RECENT
+from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn
+from rich import print
 
-
-dataraw = pd.read_csv('youtube_comments.csv', on_bad_lines = 'warn', header = None)
+def scrape(url, targetfile):
+        downloader = YoutubeCommentDownloader()
+        comments = downloader.get_comments_from_url(url, sort_by=SORT_BY_RECENT)
+        print(f"Scraping comments from {url} to {targetfile}...")
+        with Progress() as progress:
+            task = progress.add_task("[red]Scraping...", total=100)
+            with open(targetfile, 'w', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(['index', 'comment_text'])
+                start_time = time.time()
+                for idx, comment in enumerate(comments):
+                        progress.update(task, advance=1)
+                        writer.writerow([idx, comment['text'].replace('\n', ' ')])
+                        #this is to make sure this program doesnt run for too long(if u have bad wifi)
+                        if time.time() - start_time > 500:
+                         break
+                        if idx >= 100:
+                         break
+                        #yt was getting rate limited, so added a sleep every 10 comments to avoid that :)
+                        if idx % 10 == 0:
+                             time.sleep(0.1)
+                             continue
+                        
+        print(f"Scraping completed. Comments saved to {targetfile}.")             
+        return targetfile
+scrape('https://www.youtube.com/watch?v=hh3JCjOHG_E&pp=ugUEEgJlbg%3D%3D', 'ytdownload.csv')
+dataraw = pd.read_csv('ytdownload.csv', encoding='utf-8')
 mask = dataraw.apply(lambda row: len(''.join(row.fillna('').astype(str))), axis=1) > 2
 datacleaned = dataraw.to_numpy(dtype=object)
-datacleaned = dataraw[mask].drop(dataraw.columns[0], axis=1)
-datacleaned = datacleaned.to_numpy(dtype = object)
-
 
 def ai_detect(comment):
     response = ollama.chat(model='gemma3:1b', messages=[
@@ -33,8 +59,9 @@ def ai_detect(comment):
 
 start_time = time.time()
 
-spef_movie = datacleaned[:, 0] == 'Avengers Endgame Trailer'
+spef_movie = datacleaned
 indices = np.where(spef_movie)[0]
+indeces = indices.reshape(-1, 1)
 total_sentiment = 0
 
 for idx in indices:
@@ -44,8 +71,12 @@ for idx in indices:
         datacleaned[idx, 1] = sentiment
         
         total_sentiment += float(sentiment)
-        
-        print(f"Processed index {idx} | Sentiment: {sentiment}")
+        if sentiment == '1':
+            print(f"[bold green]Processed index {idx} | Sentiment: {sentiment}[/bold green]")
+        elif sentiment == '-1':
+            print(f"[bold red]Processed index {idx} | Sentiment: {sentiment}[/bold red]")
+        else:  
+            print(f"[bold white]Processed index {idx} | Sentiment: {sentiment}[/bold white]")
         
     except Exception as e:
         print(f"Error processing index {idx}: {e}")
@@ -58,12 +89,3 @@ average = total_sentiment / len(indices)
 print(f"---")
 print(f"Processing completed in {(end_time - start_time)/60:.2f} minutes")
 print(f"Average score: {average:.4f}")
-
-
-
-
-
-
-
-
-
